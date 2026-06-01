@@ -133,6 +133,55 @@ const FIELD_ICONS = ["📋","📌","💡","🔖","📎","🗓","👥","💰","�
 
 const EMPTY_COMPANY = { name:"", categoryId:"", description:"", dates:[""], meetingPlace:"", items:"", parentVisit:"", parking:"", notes:"", extra:{} };
 
+// ---- CSV Import ----
+async function importCSV(file, categories, extraFields) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target.result.replace(/^\uFEFF/, "");
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length < 2) { reject(new Error("データが空です")); return; }
+        const parseRow = row => {
+          const result = []; let cur = ""; let inQ = false;
+          for (let i = 0; i < row.length; i++) {
+            const c = row[i];
+            if (c === '"') { if (inQ && row[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+            else if (c === ',' && !inQ) { result.push(cur); cur = ""; }
+            else cur += c;
+          }
+          result.push(cur); return result;
+        };
+        const headers = parseRow(lines[0]);
+        const imported = [];
+        for (let i = 1; i < lines.length; i++) {
+          const cols = parseRow(lines[i]);
+          if (cols.every(c => !c.trim())) continue;
+          const catLabel = cols[headers.indexOf("カテゴリ")] || "";
+          const cat = categories.find(c => c.label === catLabel);
+          const extra = {};
+          extraFields.forEach(f => { const idx = headers.indexOf(f.label); if (idx >= 0) extra[f.id] = cols[idx] || ""; });
+          imported.push({
+            name: cols[headers.indexOf("企業名")] || "",
+            categoryId: cat?.id || "",
+            description: cols[headers.indexOf("体験内容")] || "",
+            dates: (cols[headers.indexOf("日時")] || "").split(" / ").filter(Boolean),
+            meetingPlace: cols[headers.indexOf("集合場所")] || "",
+            items: cols[headers.indexOf("持ち物・服装")] || "",
+            parentVisit: cols[headers.indexOf("保護者の見学")] || "",
+            parking: cols[headers.indexOf("駐車場")] || "",
+            notes: cols[headers.indexOf("注意事項")] || "",
+            extra,
+          });
+        }
+        resolve(imported);
+      } catch(e) { reject(e); }
+    };
+    reader.onerror = () => reject(new Error("ファイル読み込み失敗"));
+    reader.readAsText(file, "utf-8");
+  });
+}
+
 // ---- CSV Export ----
 function exportCSV(companies, categories, extraFields) {
   const getCat = id => categories.find(c => c.id === id) || { label: id||"未設定" };
@@ -187,6 +236,9 @@ export default function App() {
   const [fieldEditTarget, setFieldEditTarget] = useState(undefined);
   const [fieldForm, setFieldForm] = useState({});
   const [fieldDeleteConfirm, setFieldDeleteConfirm] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importPreview, setImportPreview] = useState(null); // プレビューデータ
+  const [importMode, setImportMode] = useState("add"); // add | replace
 
   const loadAll = async () => {
     try {
@@ -247,6 +299,35 @@ export default function App() {
       setEditTarget(undefined); flash("保存しました！");
     } catch(e) { flash("エラー: "+e.message); }
     setSaving(false);
+  };
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const data = await importCSV(file, categories, extraFields);
+      setImportPreview(data);
+    } catch(err) { flash("読み込みエラー: " + err.message); }
+    e.target.value = "";
+  };
+
+  const executeImport = async () => {
+    if (!importPreview) return;
+    setImporting(true);
+    try {
+      if (importMode === "replace") {
+        for (const c of companies) { await db.deleteCompany(c.id).catch(()=>{}); }
+      }
+      const added = [];
+      for (const c of importPreview) {
+        const newC = await db.addCompany(c);
+        added.push({...c, id: newC.id});
+      }
+      setCompanies(importMode === "replace" ? added : [...companies, ...added]);
+      setImportPreview(null);
+      flash(`${added.length}件インポートしました！`);
+    } catch(err) { flash("インポートエラー: " + err.message); }
+    setImporting(false);
   };
 
   const deleteCompany = async id => {
@@ -339,6 +420,10 @@ export default function App() {
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           {saveMsg && <span style={S.saveMsg}>{saveMsg}</span>}
           <button style={S.csvBtn} onClick={()=>exportCSV(companies,categories,extraFields)}>📥 CSV書き出し</button>
+          <label style={S.importBtn}>
+            📤 CSVインポート
+            <input type="file" accept=".csv" style={{display:"none"}} onChange={handleImportFile}/>
+          </label>
           <button style={S.logoutBtn} onClick={()=>setView("home")}>← サイトへ戻る</button>
           <button style={S.logoutBtn2} onClick={()=>setView("home")}>ログアウト</button>
         </div>
@@ -504,6 +589,23 @@ export default function App() {
         </div>
       )}
 
+      {importPreview && <Overlay>
+        <p style={S.confirmText}>CSVインポート確認</p>
+        <p style={{fontSize:13,color:"#444",margin:"0 0 12px"}}>{importPreview.length}件のデータが見つかりました</p>
+        <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:16}}>
+          <button style={{...S.cancelBtn,background:importMode==="add"?"#2a5c3f":"#f0ede4",color:importMode==="add"?"#fff":"#555"}} onClick={()=>setImportMode("add")}>追加する</button>
+          <button style={{...S.cancelBtn,background:importMode==="replace"?"#c00":"#f0ede4",color:importMode==="replace"?"#fff":"#555"}} onClick={()=>setImportMode("replace")}>全て置き換え</button>
+        </div>
+        {importMode==="replace" && <p style={{fontSize:12,color:"#e05",margin:"0 0 12px"}}>⚠️ 既存の企業データが全て削除されます</p>}
+        <div style={{maxHeight:160,overflowY:"auto",marginBottom:16,textAlign:"left"}}>
+          {importPreview.map((c,i)=><p key={i} style={{fontSize:12,margin:"2px 0",color:"#444"}}>・{c.name || "（名前なし）"}</p>)}
+        </div>
+        <div style={{display:"flex",gap:12,justifyContent:"center"}}>
+          <button style={S.saveBtn} onClick={executeImport} disabled={importing}>{importing?"処理中...":"インポートする"}</button>
+          <button style={S.cancelBtn} onClick={()=>setImportPreview(null)}>キャンセル</button>
+        </div>
+      </Overlay>}
+
       {deleteConfirm && <Overlay><p style={S.confirmText}>本当に削除しますか？</p><p style={S.confirmName}>{companies.find(c=>c.id===deleteConfirm)?.name}</p><div style={{display:"flex",gap:12,justifyContent:"center"}}><button style={S.deleteConfirmBtn} onClick={()=>deleteCompany(deleteConfirm)}>削除する</button><button style={S.cancelBtn} onClick={()=>setDeleteConfirm(null)}>キャンセル</button></div></Overlay>}
       {catDeleteConfirm && <Overlay><p style={S.confirmText}>カテゴリを削除しますか？</p><p style={S.confirmName}>{categories.find(c=>c.id===catDeleteConfirm)?.label}</p><p style={{fontSize:12,color:"#e05",margin:"0 0 16px"}}>※このカテゴリの企業はカテゴリなしになります</p><div style={{display:"flex",gap:12,justifyContent:"center"}}><button style={S.deleteConfirmBtn} onClick={()=>deleteCat(catDeleteConfirm)}>削除する</button><button style={S.cancelBtn} onClick={()=>setCatDeleteConfirm(null)}>キャンセル</button></div></Overlay>}
       {fieldDeleteConfirm && <Overlay><p style={S.confirmText}>項目を削除しますか？</p><p style={S.confirmName}>{extraFields.find(f=>f.id===fieldDeleteConfirm)?.label}</p><p style={{fontSize:12,color:"#e05",margin:"0 0 16px"}}>※全企業のこの項目データも削除されます</p><div style={{display:"flex",gap:12,justifyContent:"center"}}><button style={S.deleteConfirmBtn} onClick={()=>deleteField(fieldDeleteConfirm)}>削除する</button><button style={S.cancelBtn} onClick={()=>setFieldDeleteConfirm(null)}>キャンセル</button></div></Overlay>}
@@ -604,6 +706,7 @@ const S = {
   adminHeader:{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:18,flexWrap:"wrap",gap:10},
   adminLabel:{fontSize:11,color:"#2a5c3f",fontWeight:700,margin:"0 0 4px",textTransform:"uppercase",letterSpacing:1},
   adminTitle:{fontSize:18,fontWeight:800,color:"#1a1a1a",margin:0,fontFamily:"serif"},
+  importBtn:{padding:"8px 14px",background:"#e3f2fd",border:"1.5px solid #90caf9",borderRadius:10,cursor:"pointer",fontSize:12,color:"#1565c0",fontWeight:600},
   csvBtn:{padding:"8px 14px",background:"#e8f5e9",border:"1.5px solid #a5d6a7",borderRadius:10,cursor:"pointer",fontSize:12,color:"#2a5c3f",fontWeight:600},
   logoutBtn:{padding:"8px 14px",background:"#fff",border:"1.5px solid #ddd",borderRadius:10,cursor:"pointer",fontSize:12,color:"#2a5c3f",fontWeight:600},
   logoutBtn2:{padding:"8px 14px",background:"#fff",border:"1.5px solid #ddd",borderRadius:10,cursor:"pointer",fontSize:12,color:"#888"},
