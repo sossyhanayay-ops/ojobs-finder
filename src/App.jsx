@@ -1,5 +1,110 @@
 import { useState, useEffect } from "react";
 
+// ---- Supabase設定 ----
+const SUPABASE_URL = "https://gxfcrgzhcjejraljluuv.supabase.co";
+const SUPABASE_KEY = "sb_publishable_9LPtDr7H8rYU2O9u3n46UQ_xXsWVF3F";
+
+async function sbFetch(path, options = {}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+    ...options,
+    headers: {
+      "apikey": SUPABASE_KEY,
+      "Authorization": `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      "Prefer": options.prefer || "return=representation",
+      ...(options.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : [];
+}
+
+const db = {
+  // ---- Companies ----
+  async getCompanies() {
+    const rows = await sbFetch("/companies?select=*&order=id.asc");
+    return rows.map(r => ({
+      id: r.id, name: r.name, categoryId: r.category_id,
+      description: r.description, dates: r.dates || [],
+      meetingPlace: r.meeting_place, items: r.items,
+      parentVisit: r.parent_visit, parking: r.parking,
+      notes: r.notes, extra: r.extra || {},
+    }));
+  },
+  async addCompany(c) {
+    const rows = await sbFetch("/companies", {
+      method: "POST",
+      body: JSON.stringify({
+        name: c.name, category_id: c.categoryId,
+        description: c.description, dates: c.dates || [],
+        meeting_place: c.meetingPlace, items: c.items,
+        parent_visit: c.parentVisit, parking: c.parking,
+        notes: c.notes, extra: c.extra || {},
+      }),
+    });
+    return rows[0];
+  },
+  async updateCompany(id, c) {
+    await sbFetch(`/companies?id=eq.${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: c.name, category_id: c.categoryId,
+        description: c.description, dates: c.dates || [],
+        meeting_place: c.meetingPlace, items: c.items,
+        parent_visit: c.parentVisit, parking: c.parking,
+        notes: c.notes, extra: c.extra || {},
+      }),
+    });
+  },
+  async deleteCompany(id) {
+    await sbFetch(`/companies?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" });
+  },
+  // ---- Categories ----
+  async getCategories() {
+    return sbFetch("/categories?select=*&order=sort_order.asc,id.asc");
+  },
+  async addCategory(c) {
+    const rows = await sbFetch("/categories", {
+      method: "POST",
+      body: JSON.stringify({ id: "cat_"+Date.now(), label: c.label, emoji: c.emoji, color: c.color, sort_order: 0 }),
+    });
+    return rows[0];
+  },
+  async updateCategory(id, c) {
+    await sbFetch(`/categories?id=eq.${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ label: c.label, emoji: c.emoji, color: c.color }),
+    });
+  },
+  async deleteCategory(id) {
+    await sbFetch(`/categories?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" });
+  },
+  // ---- Extra Fields ----
+  async getExtraFields() {
+    return sbFetch("/extra_fields?select=*&order=sort_order.asc,id.asc");
+  },
+  async addExtraField(f) {
+    const rows = await sbFetch("/extra_fields", {
+      method: "POST",
+      body: JSON.stringify({ id: "field_"+Date.now(), label: f.label, type: f.type, icon: f.icon, sort_order: 0 }),
+    });
+    return rows[0];
+  },
+  async updateExtraField(id, f) {
+    await sbFetch(`/extra_fields?id=eq.${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ label: f.label, type: f.type, icon: f.icon }),
+    });
+  },
+  async deleteExtraField(id) {
+    await sbFetch(`/extra_fields?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" });
+  },
+};
+
 const ADMIN_PASSWORD = "hida2026";
 
 const DEFAULT_CATEGORIES = [
@@ -13,7 +118,6 @@ const DEFAULT_CATEGORIES = [
   { id: "it", label: "IT・デザイン", emoji: "💻", color: "#2a8a8a" },
 ];
 
-// 固定項目（常に存在・削除不可）
 const FIXED_FIELDS = [
   { id: "dates",        label: "日時",         type: "dates",    icon: "📅" },
   { id: "meetingPlace", label: "集合場所",      type: "textarea", icon: "📍" },
@@ -23,36 +127,32 @@ const FIXED_FIELDS = [
   { id: "notes",        label: "注意事項",      type: "textarea", icon: "⚠️" },
 ];
 
-const DEFAULT_EXTRA_FIELDS = [];
+const EMOJI_OPTIONS = ["🌾","🍱","🪵","🏥","🏯","🛍","🏗","💻","🎨","🚗","⚡","🌊","🏔","🎭","📚","🔧","🌸","🐄","🍵","🏠","✂️","🎵","🏋","🌿","🦺","🎪","🏦","🧪"];
+const COLOR_OPTIONS = ["#4a7c59","#c0764a","#6b5b8f","#c44d58","#3b7bbf","#c49a1a","#7a5c3a","#2a8a8a","#c44d9a","#4a6a9a","#9a4a2a","#2a7a5a"];
+const FIELD_ICONS = ["📋","📌","💡","🔖","📎","🗓","👥","💰","⏰","📞","🏷","✅","🎯","📝","🔑"];
 
-const INITIAL_COMPANIES = [
-  {
-    id: 1, name: "飛騨の恵み農園", categoryId: "agri", description: "野菜の収穫体験・農作業",
-    dates: ["① 7/12(土) 9:00-12:00", "② 7/13(日) 9:00-12:00"],
-    meetingPlace: "飛騨高山農協前　9:00集合",
-    items: "動きやすい服装、長靴、軍手、水筒",
-    parentVisit: "畑のみ見学可", parking: "有（農園駐車場）",
-    notes: "雨天時は翌日に順延。アレルギーのある方は事前にご連絡ください。",
-    extra: {},
-  },
-  {
-    id: 2, name: "山里豆腐工房", categoryId: "food", description: "豆腐・豆乳づくり体験",
-    dates: ["① 7/19(土) 9:30-12:00"],
-    meetingPlace: "山里豆腐工房入口　9:30集合",
-    items: "タオル、持ち帰り用袋、エプロン（貸出あり）",
-    parentVisit: "工房内は不可", parking: "有（工房前）",
-    notes: "大豆アレルギーの方は参加できません。",
-    extra: {},
-  },
-];
+const EMPTY_COMPANY = { name:"", categoryId:"", description:"", dates:[""], meetingPlace:"", items:"", parentVisit:"", parking:"", notes:"", extra:{} };
 
-// ---- Storage ----
-async function loadData(key, fallback) {
-  try { const r = await window.storage.get(key); return r ? JSON.parse(r.value) : fallback; }
-  catch { return fallback; }
-}
-async function saveData(key, val) {
-  try { await window.storage.set(key, JSON.stringify(val)); } catch {}
+// ---- CSV Export ----
+function exportCSV(companies, categories, extraFields) {
+  const getCat = id => categories.find(c => c.id === id) || { label: id||"未設定" };
+  const fixedHeaders = ["企業名","カテゴリ","体験内容","日時","集合場所","持ち物・服装","保護者の見学","駐車場","注意事項"];
+  const headers = [...fixedHeaders, ...extraFields.map(f => f.label)];
+  const rows = companies.map(c => [
+    c.name||"", getCat(c.categoryId).label, c.description||"",
+    (c.dates||[]).join(" / "), c.meetingPlace||"", c.items||"",
+    c.parentVisit||"", c.parking||"", c.notes||"",
+    ...extraFields.map(f => (c.extra||{})[f.id]||""),
+  ]);
+  const escape = v => `"${String(v).replace(/"/g,'""')}"`;
+  const csv = [headers,...rows].map(r=>r.map(escape).join(",")).join("\n");
+  const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `お仕事発見隊_企業データ_${new Date().toLocaleDateString("ja-JP").replace(/\//g,"-")}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ---- Icons ----
@@ -63,17 +163,12 @@ const EditIcon = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="non
 const TrashIcon = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>;
 const LockIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>;
 
-const EMOJI_OPTIONS = ["🌾","🍱","🪵","🏥","🏯","🛍","🏗","💻","🎨","🚗","⚡","🌊","🏔","🎭","📚","🔧","🌸","🐄","🍵","🏠","✂️","🎵","🏋","🌿","🦺","🎪","🏦","🧪"];
-const COLOR_OPTIONS = ["#4a7c59","#c0764a","#6b5b8f","#c44d58","#3b7bbf","#c49a1a","#7a5c3a","#2a8a8a","#c44d9a","#4a6a9a","#9a4a2a","#2a7a5a"];
-const FIELD_ICONS = ["📋","📌","💡","🔖","📎","🗓","👥","💰","⏰","📞","🏷","✅","🎯","📝","🔑"];
-
-const EMPTY_COMPANY = { name:"", categoryId:"", description:"", dates:[""], meetingPlace:"", items:"", parentVisit:"", parking:"", notes:"", extra:{} };
-
 export default function App() {
   const [companies, setCompanies] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [extraFields, setExtraFields] = useState([]); // カスタム項目
+  const [extraFields, setExtraFields] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [view, setView] = useState("home");
   const [selectedCompany, setSelectedCompany] = useState(null);
   const [searchText, setSearchText] = useState("");
@@ -84,6 +179,7 @@ export default function App() {
   const [editTarget, setEditTarget] = useState(undefined);
   const [formData, setFormData] = useState({});
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
   const [catEditTarget, setCatEditTarget] = useState(undefined);
   const [catForm, setCatForm] = useState({});
@@ -92,27 +188,37 @@ export default function App() {
   const [fieldForm, setFieldForm] = useState({});
   const [fieldDeleteConfirm, setFieldDeleteConfirm] = useState(null);
 
-  useEffect(() => {
-    Promise.all([
-      loadData("companies_v3", INITIAL_COMPANIES),
-      loadData("categories_v2", DEFAULT_CATEGORIES),
-      loadData("extraFields_v1", DEFAULT_EXTRA_FIELDS),
-    ]).then(([c, cat, ef]) => { setCompanies(c); setCategories(cat); setExtraFields(ef); setLoading(false); });
-  }, []);
+  const loadAll = async () => {
+    try {
+      setLoading(true); setError(null);
+      const [cos, cats, efs] = await Promise.all([db.getCompanies(), db.getCategories(), db.getExtraFields()]);
+      setCompanies(cos);
+      setCategories(cats.length ? cats : DEFAULT_CATEGORIES);
+      setExtraFields(efs);
+      // カテゴリが空なら初期データを投入
+      if (!cats.length) {
+        for (const c of DEFAULT_CATEGORIES) {
+          await sbFetch("/categories", { method:"POST", body: JSON.stringify(c) }).catch(()=>{});
+        }
+      }
+    } catch(e) {
+      setError("データの読み込みに失敗しました: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const persistCompanies = d => { setCompanies(d); saveData("companies_v3", d); };
-  const persistCategories = d => { setCategories(d); saveData("categories_v2", d); };
-  const persistExtraFields = d => { setExtraFields(d); saveData("extraFields_v1", d); };
+  useEffect(() => { loadAll(); }, []);
+
   const getCat = id => categories.find(c => c.id === id) || { label: id||"未設定", emoji:"🏢", color:"#888" };
-  const flash = msg => { setSaveMsg(msg); setTimeout(() => setSaveMsg(""), 2000); };
+  const flash = msg => { setSaveMsg(msg); setTimeout(()=>setSaveMsg(""), 2000); };
 
   const filtered = companies.filter(c => {
     const matchCat = selectedCategoryId ? c.categoryId === selectedCategoryId : true;
-    const matchText = searchText ? c.name.includes(searchText) || c.description.includes(searchText) : true;
+    const matchText = searchText ? c.name.includes(searchText)||c.description.includes(searchText) : true;
     return matchCat && matchText;
   });
 
-  // ---- Login ----
   const handleLogin = () => {
     if (loginPass === ADMIN_PASSWORD) { setLoginPass(""); setLoginError(false); setView("admin"); }
     else setLoginError(true);
@@ -121,66 +227,88 @@ export default function App() {
   // ---- Company ----
   const startEdit = c => {
     setEditTarget(c ? c.id : null);
-    setFormData(c
-      ? { ...c, dates: [...(c.dates||[""])], extra: { ...(c.extra||{}) } }
-      : { ...EMPTY_COMPANY, categoryId: categories[0]?.id||"", extra:{} });
+    setFormData(c ? {...c, dates:[...(c.dates||[""])], extra:{...(c.extra||{})}} : {...EMPTY_COMPANY, categoryId:categories[0]?.id||""});
   };
-  const updateDate = (i, val) => {
-    const d = [...(formData.dates||[""])]; d[i] = val;
-    setFormData({ ...formData, dates: d });
+  const updateDate = (i,val) => { const d=[...(formData.dates||[""])]; d[i]=val; setFormData({...formData,dates:d}); };
+  const addDate = () => setFormData({...formData, dates:[...(formData.dates||[""]),""]}); 
+  const removeDate = i => { const d=(formData.dates||[""]).filter((_,idx)=>idx!==i); setFormData({...formData,dates:d.length?d:[""]}); };
+
+  const saveCompany = async () => {
+    setSaving(true);
+    try {
+      const cleaned = {...formData, dates:(formData.dates||[""]).filter(d=>d.trim())};
+      if (editTarget===null) {
+        const newC = await db.addCompany(cleaned);
+        setCompanies([...companies, {...cleaned, id:newC.id}]);
+      } else {
+        await db.updateCompany(editTarget, cleaned);
+        setCompanies(companies.map(c=>c.id===editTarget?{...cleaned,id:editTarget}:c));
+      }
+      setEditTarget(undefined); flash("保存しました！");
+    } catch(e) { flash("エラー: "+e.message); }
+    setSaving(false);
   };
-  const addDate = () => setFormData({ ...formData, dates: [...(formData.dates||[""]), ""] });
-  const removeDate = i => {
-    const d = (formData.dates||[""]).filter((_,idx) => idx!==i);
-    setFormData({ ...formData, dates: d.length ? d : [""] });
+
+  const deleteCompany = async id => {
+    try { await db.deleteCompany(id); setCompanies(companies.filter(c=>c.id!==id)); }
+    catch(e) { flash("エラー: "+e.message); }
+    setDeleteConfirm(null);
   };
-  const saveCompany = () => {
-    const cleaned = { ...formData, dates: (formData.dates||[""]).filter(d=>d.trim()) };
-    const updated = editTarget===null
-      ? [...companies, { ...cleaned, id: Date.now() }]
-      : companies.map(c => c.id===editTarget ? { ...cleaned, id:editTarget } : c);
-    persistCompanies(updated); setEditTarget(undefined); flash("保存しました！");
-  };
-  const deleteCompany = id => { persistCompanies(companies.filter(c=>c.id!==id)); setDeleteConfirm(null); };
 
   // ---- Category ----
-  const startCatEdit = cat => {
-    setCatEditTarget(cat ? cat.id : null);
-    setCatForm(cat ? { ...cat } : { label:"", emoji:"🏢", color:"#4a7c59" });
-  };
-  const saveCat = () => {
+  const startCatEdit = cat => { setCatEditTarget(cat?cat.id:null); setCatForm(cat?{...cat}:{label:"",emoji:"🏢",color:"#4a7c59"}); };
+  const saveCat = async () => {
     if (!catForm.label.trim()) return;
-    const updated = catEditTarget===null
-      ? [...categories, { ...catForm, id:"cat_"+Date.now() }]
-      : categories.map(c => c.id===catEditTarget ? { ...catForm, id:catEditTarget } : c);
-    persistCategories(updated); setCatEditTarget(undefined); flash("保存しました！");
+    setSaving(true);
+    try {
+      if (catEditTarget===null) {
+        const newC = await db.addCategory(catForm);
+        setCategories([...categories, newC]);
+      } else {
+        await db.updateCategory(catEditTarget, catForm);
+        setCategories(categories.map(c=>c.id===catEditTarget?{...catForm,id:catEditTarget}:c));
+      }
+      setCatEditTarget(undefined); flash("保存しました！");
+    } catch(e) { flash("エラー: "+e.message); }
+    setSaving(false);
   };
-  const deleteCat = id => { persistCategories(categories.filter(c=>c.id!==id)); setCatDeleteConfirm(null); };
+  const deleteCat = async id => {
+    try { await db.deleteCategory(id); setCategories(categories.filter(c=>c.id!==id)); }
+    catch(e) { flash("エラー: "+e.message); }
+    setCatDeleteConfirm(null);
+  };
 
   // ---- Extra Fields ----
-  const startFieldEdit = f => {
-    setFieldEditTarget(f ? f.id : null);
-    setFieldForm(f ? { ...f } : { label:"", type:"text", icon:"📋" });
-  };
-  const saveField = () => {
+  const startFieldEdit = f => { setFieldEditTarget(f?f.id:null); setFieldForm(f?{...f}:{label:"",type:"text",icon:"📋"}); };
+  const saveField = async () => {
     if (!fieldForm.label.trim()) return;
-    const updated = fieldEditTarget===null
-      ? [...extraFields, { ...fieldForm, id:"field_"+Date.now() }]
-      : extraFields.map(f => f.id===fieldEditTarget ? { ...fieldForm, id:fieldEditTarget } : f);
-    persistExtraFields(updated); setFieldEditTarget(undefined); flash("保存しました！");
+    setSaving(true);
+    try {
+      if (fieldEditTarget===null) {
+        const newF = await db.addExtraField(fieldForm);
+        setExtraFields([...extraFields, newF]);
+      } else {
+        await db.updateExtraField(fieldEditTarget, fieldForm);
+        setExtraFields(extraFields.map(f=>f.id===fieldEditTarget?{...fieldForm,id:fieldEditTarget}:f));
+      }
+      setFieldEditTarget(undefined); flash("保存しました！");
+    } catch(e) { flash("エラー: "+e.message); }
+    setSaving(false);
   };
-  const deleteField = id => {
-    persistExtraFields(extraFields.filter(f=>f.id!==id));
-    // 企業データからも削除
-    const updated = companies.map(c => {
-      const extra = { ...(c.extra||{}) }; delete extra[id];
-      return { ...c, extra };
-    });
-    persistCompanies(updated);
+  const deleteField = async id => {
+    try {
+      await db.deleteExtraField(id);
+      setExtraFields(extraFields.filter(f=>f.id!==id));
+      // 企業データからも削除
+      const updated = companies.map(c=>{ const extra={...(c.extra||{})}; delete extra[id]; return {...c,extra}; });
+      for (const c of updated) { await db.updateCompany(c.id, c).catch(()=>{}); }
+      setCompanies(updated);
+    } catch(e) { flash("エラー: "+e.message); }
     setFieldDeleteConfirm(null);
   };
 
   if (loading) return <div style={S.center}><div style={S.spinner}/><p style={{color:"#888"}}>読み込み中...</p></div>;
+  if (error) return <div style={S.center}><p style={{color:"#e05",padding:20,textAlign:"center"}}>{error}</p><button style={S.saveBtn} onClick={loadAll}>再読み込み</button></div>;
 
   // ========== LOGIN ==========
   if (view==="admin-login") return (
@@ -189,7 +317,7 @@ export default function App() {
         <div style={S.loginIconWrap}><LockIcon/></div>
         <h2 style={S.loginTitle}>管理者ログイン</h2>
         <p style={S.loginSub}>お仕事発見隊　管理システム</p>
-        <input style={{...S.loginInput, borderColor:loginError?"#e05":"#d0c9b8"}}
+        <input style={{...S.loginInput,borderColor:loginError?"#e05":"#d0c9b8"}}
           type="password" placeholder="パスワードを入力" value={loginPass}
           onChange={e=>{setLoginPass(e.target.value);setLoginError(false);}}
           onKeyDown={e=>e.key==="Enter"&&handleLogin()} />
@@ -210,20 +338,15 @@ export default function App() {
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           {saveMsg && <span style={S.saveMsg}>{saveMsg}</span>}
+          <button style={S.csvBtn} onClick={()=>exportCSV(companies,categories,extraFields)}>📥 CSV書き出し</button>
           <button style={S.logoutBtn} onClick={()=>setView("home")}>← サイトへ戻る</button>
-          <button style={S.logoutBtn2} onClick={()=>{setView("home");}}>ログアウト</button>
+          <button style={S.logoutBtn2} onClick={()=>setView("home")}>ログアウト</button>
         </div>
       </div>
 
-      {/* Tabs */}
       <div style={S.tabs}>
-        {[
-          {key:"companies", label:"🏢 企業"},
-          {key:"categories", label:"🏷 カテゴリ"},
-          {key:"fields", label:"📋 項目"},
-        ].map(t => (
-          <button key={t.key}
-            style={{...S.tab,...(adminTab===t.key?S.tabActive:{})}}
+        {[{key:"companies",label:"🏢 企業"},{key:"categories",label:"🏷 カテゴリ"},{key:"fields",label:"📋 項目"}].map(t=>(
+          <button key={t.key} style={{...S.tab,...(adminTab===t.key?S.tabActive:{})}}
             onClick={()=>{setAdminTab(t.key);setEditTarget(undefined);setCatEditTarget(undefined);setFieldEditTarget(undefined);}}>
             {t.label}
           </button>
@@ -236,8 +359,7 @@ export default function App() {
           <div style={{display:"flex",justifyContent:"flex-end",marginBottom:14}}>
             <button style={S.addBtn} onClick={()=>startEdit(null)}><PlusIcon/> 企業を追加</button>
           </div>
-
-          {editTarget !== undefined && (
+          {editTarget!==undefined && (
             <div style={S.formCard}>
               <h3 style={S.formTitle}>{editTarget===null?"新規追加":"企業を編集"}</h3>
               <div style={S.formGrid}>
@@ -248,10 +370,8 @@ export default function App() {
                   </select>
                 </FR>
                 <FR label="体験内容"><input style={S.inp} value={formData.description||""} onChange={e=>setFormData({...formData,description:e.target.value})}/></FR>
-
-                {/* 固定項目 */}
-                {FIXED_FIELDS.map(f => {
-                  if (f.type==="dates") return (
+                {FIXED_FIELDS.map(f=>{
+                  if(f.type==="dates") return (
                     <FR key={f.id} label={`${f.icon} ${f.label}`}>
                       <div style={{display:"flex",flexDirection:"column",gap:6}}>
                         {(formData.dates||[""]).map((d,i)=>(
@@ -264,43 +384,31 @@ export default function App() {
                       </div>
                     </FR>
                   );
-                  if (f.type==="textarea") return (
-                    <FR key={f.id} label={`${f.icon} ${f.label}`}>
-                      <textarea style={S.ta} value={formData[f.id]||""} onChange={e=>setFormData({...formData,[f.id]:e.target.value})}/>
-                    </FR>
-                  );
-                  return (
-                    <FR key={f.id} label={`${f.icon} ${f.label}`}>
-                      <input style={S.inp} value={formData[f.id]||""} onChange={e=>setFormData({...formData,[f.id]:e.target.value})}/>
-                    </FR>
-                  );
+                  if(f.type==="textarea") return <FR key={f.id} label={`${f.icon} ${f.label}`}><textarea style={S.ta} value={formData[f.id]||""} onChange={e=>setFormData({...formData,[f.id]:e.target.value})}/></FR>;
+                  return <FR key={f.id} label={`${f.icon} ${f.label}`}><input style={S.inp} value={formData[f.id]||""} onChange={e=>setFormData({...formData,[f.id]:e.target.value})}/></FR>;
                 })}
-
-                {/* カスタム項目 */}
-                {extraFields.length > 0 && (
+                {extraFields.length>0 && (
                   <div style={S.extraSection}>
                     <p style={S.extraSectionLabel}>追加項目</p>
-                    {extraFields.map(f => (
+                    {extraFields.map(f=>(
                       <FR key={f.id} label={`${f.icon} ${f.label}`}>
                         {f.type==="textarea"
                           ? <textarea style={S.ta} value={(formData.extra||{})[f.id]||""} onChange={e=>setFormData({...formData,extra:{...(formData.extra||{}),[f.id]:e.target.value}})}/>
-                          : <input style={S.inp} value={(formData.extra||{})[f.id]||""} onChange={e=>setFormData({...formData,extra:{...(formData.extra||{}),[f.id]:e.target.value}})}/>
-                        }
+                          : <input style={S.inp} value={(formData.extra||{})[f.id]||""} onChange={e=>setFormData({...formData,extra:{...(formData.extra||{}),[f.id]:e.target.value}})}/>}
                       </FR>
                     ))}
                   </div>
                 )}
               </div>
               <div style={{display:"flex",gap:10,marginTop:18}}>
-                <button style={S.saveBtn} onClick={saveCompany}>保存</button>
+                <button style={S.saveBtn} onClick={saveCompany} disabled={saving}>{saving?"保存中...":"保存"}</button>
                 <button style={S.cancelBtn} onClick={()=>setEditTarget(undefined)}>キャンセル</button>
               </div>
             </div>
           )}
-
           <div style={S.adminList}>
-            {companies.map(c => {
-              const cat = getCat(c.categoryId);
+            {companies.map(c=>{
+              const cat=getCat(c.categoryId);
               return (
                 <div key={c.id} style={S.adminRow}>
                   <span style={{...S.catBadge,background:cat.color+"22",color:cat.color}}>{cat.emoji} {cat.label}</span>
@@ -325,35 +433,17 @@ export default function App() {
           <div style={{display:"flex",justifyContent:"flex-end",marginBottom:14}}>
             <button style={S.addBtn} onClick={()=>startCatEdit(null)}><PlusIcon/> カテゴリを追加</button>
           </div>
-          {catEditTarget !== undefined && (
+          {catEditTarget!==undefined && (
             <div style={S.formCard}>
               <h3 style={S.formTitle}>{catEditTarget===null?"新規カテゴリ":"カテゴリを編集"}</h3>
               <div style={S.formGrid}>
                 <FR label="カテゴリ名"><input style={S.inp} value={catForm.label||""} onChange={e=>setCatForm({...catForm,label:e.target.value})}/></FR>
-                <FR label="絵文字">
-                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                    {EMOJI_OPTIONS.map(em=>(
-                      <button key={em} onClick={()=>setCatForm({...catForm,emoji:em})}
-                        style={{...S.emojiBtn,background:catForm.emoji===em?"#2a5c3f":"#f0ede4",color:catForm.emoji===em?"#fff":"#333"}}>{em}</button>
-                    ))}
-                  </div>
-                </FR>
-                <FR label="カラー">
-                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                    {COLOR_OPTIONS.map(col=>(
-                      <button key={col} onClick={()=>setCatForm({...catForm,color:col})}
-                        style={{...S.colorBtn,background:col,outline:catForm.color===col?"3px solid #333":"none"}}/>
-                    ))}
-                  </div>
-                </FR>
-                <FR label="プレビュー">
-                  <span style={{...S.catBadge,background:(catForm.color||"#888")+"22",color:catForm.color||"#888"}}>
-                    {catForm.emoji} {catForm.label||"カテゴリ名"}
-                  </span>
-                </FR>
+                <FR label="絵文字"><div style={{display:"flex",flexWrap:"wrap",gap:5}}>{EMOJI_OPTIONS.map(em=><button key={em} onClick={()=>setCatForm({...catForm,emoji:em})} style={{...S.emojiBtn,background:catForm.emoji===em?"#2a5c3f":"#f0ede4",color:catForm.emoji===em?"#fff":"#333"}}>{em}</button>)}</div></FR>
+                <FR label="カラー"><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{COLOR_OPTIONS.map(col=><button key={col} onClick={()=>setCatForm({...catForm,color:col})} style={{...S.colorBtn,background:col,outline:catForm.color===col?"3px solid #333":"none"}}/>)}</div></FR>
+                <FR label="プレビュー"><span style={{...S.catBadge,background:(catForm.color||"#888")+"22",color:catForm.color||"#888"}}>{catForm.emoji} {catForm.label||"カテゴリ名"}</span></FR>
               </div>
               <div style={{display:"flex",gap:10,marginTop:18}}>
-                <button style={S.saveBtn} onClick={saveCat}>保存</button>
+                <button style={S.saveBtn} onClick={saveCat} disabled={saving}>{saving?"保存中...":"保存"}</button>
                 <button style={S.cancelBtn} onClick={()=>setCatEditTarget(undefined)}>キャンセル</button>
               </div>
             </div>
@@ -376,66 +466,34 @@ export default function App() {
       {/* ===== 項目タブ ===== */}
       {adminTab==="fields" && (
         <div>
-          {/* 固定項目の説明 */}
           <div style={S.fixedFieldsCard}>
             <p style={S.fixedFieldsTitle}>🔒 固定項目（削除不可）</p>
-            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-              {FIXED_FIELDS.map(f=>(
-                <span key={f.id} style={S.fixedBadge}>{f.icon} {f.label}</span>
-              ))}
-            </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{FIXED_FIELDS.map(f=><span key={f.id} style={S.fixedBadge}>{f.icon} {f.label}</span>)}</div>
           </div>
-
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
             <p style={{margin:0,fontSize:14,fontWeight:700,color:"#1a1a1a"}}>追加項目</p>
             <button style={S.addBtn} onClick={()=>startFieldEdit(null)}><PlusIcon/> 項目を追加</button>
           </div>
-
-          {fieldEditTarget !== undefined && (
+          {fieldEditTarget!==undefined && (
             <div style={S.formCard}>
               <h3 style={S.formTitle}>{fieldEditTarget===null?"新規項目":"項目を編集"}</h3>
               <div style={S.formGrid}>
                 <FR label="項目名"><input style={S.inp} value={fieldForm.label||""} onChange={e=>setFieldForm({...fieldForm,label:e.target.value})} placeholder="例: 申込み締切"/></FR>
-                <FR label="入力タイプ">
-                  <select style={S.inp} value={fieldForm.type||"text"} onChange={e=>setFieldForm({...fieldForm,type:e.target.value})}>
-                    <option value="text">1行テキスト</option>
-                    <option value="textarea">複数行テキスト</option>
-                  </select>
-                </FR>
-                <FR label="アイコン">
-                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                    {FIELD_ICONS.map(ic=>(
-                      <button key={ic} onClick={()=>setFieldForm({...fieldForm,icon:ic})}
-                        style={{...S.emojiBtn,background:fieldForm.icon===ic?"#2a5c3f":"#f0ede4",color:fieldForm.icon===ic?"#fff":"#333"}}>{ic}</button>
-                    ))}
-                  </div>
-                </FR>
-                <FR label="プレビュー">
-                  <span style={{fontSize:13,color:"#444"}}>{fieldForm.icon||"📋"} <strong>{fieldForm.label||"項目名"}</strong></span>
-                </FR>
+                <FR label="入力タイプ"><select style={S.inp} value={fieldForm.type||"text"} onChange={e=>setFieldForm({...fieldForm,type:e.target.value})}><option value="text">1行テキスト</option><option value="textarea">複数行テキスト</option></select></FR>
+                <FR label="アイコン"><div style={{display:"flex",flexWrap:"wrap",gap:5}}>{FIELD_ICONS.map(ic=><button key={ic} onClick={()=>setFieldForm({...fieldForm,icon:ic})} style={{...S.emojiBtn,background:fieldForm.icon===ic?"#2a5c3f":"#f0ede4",color:fieldForm.icon===ic?"#fff":"#333"}}>{ic}</button>)}</div></FR>
               </div>
               <div style={{display:"flex",gap:10,marginTop:18}}>
-                <button style={S.saveBtn} onClick={saveField}>保存</button>
+                <button style={S.saveBtn} onClick={saveField} disabled={saving}>{saving?"保存中...":"保存"}</button>
                 <button style={S.cancelBtn} onClick={()=>setFieldEditTarget(undefined)}>キャンセル</button>
               </div>
             </div>
           )}
-
-          {extraFields.length===0 && fieldEditTarget===undefined && (
-            <div style={S.emptyFieldState}>
-              <p style={{margin:0,color:"#aaa",fontSize:14}}>追加項目はまだありません</p>
-              <p style={{margin:"4px 0 0",color:"#bbb",fontSize:12}}>「項目を追加」から自由に増やせます</p>
-            </div>
-          )}
-
+          {extraFields.length===0 && fieldEditTarget===undefined && <div style={S.emptyFieldState}><p style={{margin:0,color:"#aaa",fontSize:14}}>追加項目はまだありません</p></div>}
           <div style={S.adminList}>
             {extraFields.map(f=>(
               <div key={f.id} style={S.adminRow}>
                 <span style={{fontSize:20}}>{f.icon}</span>
-                <div style={{flex:1}}>
-                  <p style={S.adminName}>{f.label}</p>
-                  <p style={S.adminDesc}>{f.type==="textarea"?"複数行テキスト":"1行テキスト"}</p>
-                </div>
+                <div style={{flex:1}}><p style={S.adminName}>{f.label}</p><p style={S.adminDesc}>{f.type==="textarea"?"複数行":"1行"}</p></div>
                 <div style={{display:"flex",gap:7}}>
                   <button style={S.editBtn} onClick={()=>startFieldEdit(f)}><EditIcon/> 編集</button>
                   <button style={S.deleteBtn} onClick={()=>setFieldDeleteConfirm(f.id)}><TrashIcon/> 削除</button>
@@ -446,53 +504,19 @@ export default function App() {
         </div>
       )}
 
-      {/* Confirms */}
-      {deleteConfirm && <Overlay>
-        <p style={S.confirmText}>本当に削除しますか？</p>
-        <p style={S.confirmName}>{companies.find(c=>c.id===deleteConfirm)?.name}</p>
-        <div style={{display:"flex",gap:12,justifyContent:"center"}}>
-          <button style={S.deleteConfirmBtn} onClick={()=>deleteCompany(deleteConfirm)}>削除する</button>
-          <button style={S.cancelBtn} onClick={()=>setDeleteConfirm(null)}>キャンセル</button>
-        </div>
-      </Overlay>}
-      {catDeleteConfirm && <Overlay>
-        <p style={S.confirmText}>カテゴリを削除しますか？</p>
-        <p style={S.confirmName}>{categories.find(c=>c.id===catDeleteConfirm)?.label}</p>
-        <p style={{fontSize:12,color:"#e05",margin:"0 0 16px"}}>※このカテゴリの企業はカテゴリなしになります</p>
-        <div style={{display:"flex",gap:12,justifyContent:"center"}}>
-          <button style={S.deleteConfirmBtn} onClick={()=>deleteCat(catDeleteConfirm)}>削除する</button>
-          <button style={S.cancelBtn} onClick={()=>setCatDeleteConfirm(null)}>キャンセル</button>
-        </div>
-      </Overlay>}
-      {fieldDeleteConfirm && <Overlay>
-        <p style={S.confirmText}>項目を削除しますか？</p>
-        <p style={S.confirmName}>{extraFields.find(f=>f.id===fieldDeleteConfirm)?.label}</p>
-        <p style={{fontSize:12,color:"#e05",margin:"0 0 16px"}}>※全企業のこの項目データも削除されます</p>
-        <div style={{display:"flex",gap:12,justifyContent:"center"}}>
-          <button style={S.deleteConfirmBtn} onClick={()=>deleteField(fieldDeleteConfirm)}>削除する</button>
-          <button style={S.cancelBtn} onClick={()=>setFieldDeleteConfirm(null)}>キャンセル</button>
-        </div>
-      </Overlay>}
+      {deleteConfirm && <Overlay><p style={S.confirmText}>本当に削除しますか？</p><p style={S.confirmName}>{companies.find(c=>c.id===deleteConfirm)?.name}</p><div style={{display:"flex",gap:12,justifyContent:"center"}}><button style={S.deleteConfirmBtn} onClick={()=>deleteCompany(deleteConfirm)}>削除する</button><button style={S.cancelBtn} onClick={()=>setDeleteConfirm(null)}>キャンセル</button></div></Overlay>}
+      {catDeleteConfirm && <Overlay><p style={S.confirmText}>カテゴリを削除しますか？</p><p style={S.confirmName}>{categories.find(c=>c.id===catDeleteConfirm)?.label}</p><p style={{fontSize:12,color:"#e05",margin:"0 0 16px"}}>※このカテゴリの企業はカテゴリなしになります</p><div style={{display:"flex",gap:12,justifyContent:"center"}}><button style={S.deleteConfirmBtn} onClick={()=>deleteCat(catDeleteConfirm)}>削除する</button><button style={S.cancelBtn} onClick={()=>setCatDeleteConfirm(null)}>キャンセル</button></div></Overlay>}
+      {fieldDeleteConfirm && <Overlay><p style={S.confirmText}>項目を削除しますか？</p><p style={S.confirmName}>{extraFields.find(f=>f.id===fieldDeleteConfirm)?.label}</p><p style={{fontSize:12,color:"#e05",margin:"0 0 16px"}}>※全企業のこの項目データも削除されます</p><div style={{display:"flex",gap:12,justifyContent:"center"}}><button style={S.deleteConfirmBtn} onClick={()=>deleteField(fieldDeleteConfirm)}>削除する</button><button style={S.cancelBtn} onClick={()=>setFieldDeleteConfirm(null)}>キャンセル</button></div></Overlay>}
     </div>
   );
 
   // ========== DETAIL ==========
   if (view==="detail" && selectedCompany) {
-    const c = selectedCompany;
-    const cat = getCat(c.categoryId);
-    const allFields = [
-      ...FIXED_FIELDS.map(f => ({
-        label: `${f.icon} ${f.label}`,
-        val: f.type==="dates"
-          ? (c.dates?.length ? c.dates.join("\n") : "")
-          : (c[f.id]||""),
-      })),
-      ...extraFields.map(f => ({
-        label: `${f.icon} ${f.label}`,
-        val: (c.extra||{})[f.id]||"",
-      })),
-    ].filter(r => r.val.trim());
-
+    const c=selectedCompany; const cat=getCat(c.categoryId);
+    const allFields=[
+      ...FIXED_FIELDS.map(f=>({label:`${f.icon} ${f.label}`,val:f.type==="dates"?(c.dates?.length?c.dates.join("\n"):""):(c[f.id]||"")})),
+      ...extraFields.map(f=>({label:`${f.icon} ${f.label}`,val:(c.extra||{})[f.id]||""})),
+    ].filter(r=>r.val.trim());
     return (
       <div style={S.detailWrap}>
         <div style={{...S.detailHeader,background:cat.color}}>
@@ -527,16 +551,13 @@ export default function App() {
       <div style={S.searchWrap}>
         <div style={S.searchBox}>
           <SearchIcon/>
-          <input style={S.searchInput} placeholder="企業名・体験内容で検索..."
-            value={searchText} onChange={e=>setSearchText(e.target.value)}/>
+          <input style={S.searchInput} placeholder="企業名・体験内容で検索..." value={searchText} onChange={e=>setSearchText(e.target.value)}/>
         </div>
       </div>
       <div style={S.catScroll}>
         <button style={{...S.catChip,...(selectedCategoryId===null?S.catChipActive:{})}} onClick={()=>setSelectedCategoryId(null)}>すべて</button>
         {categories.map(cat=>(
-          <button key={cat.id}
-            style={{...S.catChip,...(selectedCategoryId===cat.id?{background:cat.color,color:"#fff",borderColor:cat.color}:{})}}
-            onClick={()=>setSelectedCategoryId(selectedCategoryId===cat.id?null:cat.id)}>
+          <button key={cat.id} style={{...S.catChip,...(selectedCategoryId===cat.id?{background:cat.color,color:"#fff",borderColor:cat.color}:{})}} onClick={()=>setSelectedCategoryId(selectedCategoryId===cat.id?null:cat.id)}>
             {cat.emoji} {cat.label}
           </button>
         ))}
@@ -545,7 +566,7 @@ export default function App() {
       <div style={S.cardGrid}>
         {filtered.length===0 && <div style={S.emptyState}><p>該当する企業が見つかりません</p></div>}
         {filtered.map(c=>{
-          const cat = getCat(c.categoryId);
+          const cat=getCat(c.categoryId);
           return (
             <button key={c.id} style={S.card} onClick={()=>{setSelectedCompany(c);setView("detail");}}>
               <div style={{...S.cardAccent,background:cat.color}}/>
@@ -564,16 +585,8 @@ export default function App() {
   );
 }
 
-function FR({ label, children }) {
-  return <div style={{display:"flex",flexDirection:"column",gap:4}}><label style={{fontSize:12,fontWeight:600,color:"#666"}}>{label}</label>{children}</div>;
-}
-function Overlay({ children }) {
-  return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>
-      <div style={{background:"#fff",borderRadius:16,padding:32,textAlign:"center",maxWidth:320,width:"90%"}}>{children}</div>
-    </div>
-  );
-}
+function FR({label,children}){return <div style={{display:"flex",flexDirection:"column",gap:4}}><label style={{fontSize:12,fontWeight:600,color:"#666"}}>{label}</label>{children}</div>;}
+function Overlay({children}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}><div style={{background:"#fff",borderRadius:16,padding:32,textAlign:"center",maxWidth:320,width:"90%"}}>{children}</div></div>;}
 
 const S = {
   center:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",gap:16},
@@ -591,6 +604,7 @@ const S = {
   adminHeader:{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:18,flexWrap:"wrap",gap:10},
   adminLabel:{fontSize:11,color:"#2a5c3f",fontWeight:700,margin:"0 0 4px",textTransform:"uppercase",letterSpacing:1},
   adminTitle:{fontSize:18,fontWeight:800,color:"#1a1a1a",margin:0,fontFamily:"serif"},
+  csvBtn:{padding:"8px 14px",background:"#e8f5e9",border:"1.5px solid #a5d6a7",borderRadius:10,cursor:"pointer",fontSize:12,color:"#2a5c3f",fontWeight:600},
   logoutBtn:{padding:"8px 14px",background:"#fff",border:"1.5px solid #ddd",borderRadius:10,cursor:"pointer",fontSize:12,color:"#2a5c3f",fontWeight:600},
   logoutBtn2:{padding:"8px 14px",background:"#fff",border:"1.5px solid #ddd",borderRadius:10,cursor:"pointer",fontSize:12,color:"#888"},
   saveMsg:{color:"#2a5c3f",fontWeight:600,fontSize:13},
