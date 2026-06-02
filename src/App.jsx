@@ -140,22 +140,33 @@ async function importCSV(file, categories, extraFields) {
     reader.onload = async (e) => {
       try {
         const text = e.target.result.replace(/^\uFEFF/, "");
-        const lines = text.split(/\r?\n/).filter(l => l.trim());
-        if (lines.length < 2) { reject(new Error("データが空です")); return; }
-        const parseRow = row => {
-          const result = []; let cur = ""; let inQ = false;
-          for (let i = 0; i < row.length; i++) {
-            const c = row[i];
-            if (c === '"') { if (inQ && row[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
-            else if (c === ',' && !inQ) { result.push(cur); cur = ""; }
-            else cur += c;
+        // 改行を含むセルに対応したCSVパーサー
+        const parseCSV = (str) => {
+          const rows = []; let row = []; let cur = ""; let inQ = false;
+          for (let i = 0; i < str.length; i++) {
+            const c = str[i]; const next = str[i+1];
+            if (c === '"') {
+              if (inQ && next === '"') { cur += '"'; i++; }
+              else inQ = !inQ;
+            } else if (c === ',' && !inQ) {
+              row.push(cur); cur = "";
+            } else if ((c === '\n' || (c === '\r' && next === '\n')) && !inQ) {
+              if (c === '\r') i++;
+              row.push(cur); cur = "";
+              rows.push(row); row = [];
+            } else {
+              cur += c;
+            }
           }
-          result.push(cur); return result;
+          if (cur || row.length) { row.push(cur); rows.push(row); }
+          return rows;
         };
-        const headers = parseRow(lines[0]);
+        const allRows = parseCSV(text).filter(r => r.some(c => c.trim()));
+        if (allRows.length < 2) { reject(new Error("データが空です")); return; }
+        const headers = allRows[0];
         const imported = [];
-        for (let i = 1; i < lines.length; i++) {
-          const cols = parseRow(lines[i]);
+        for (let i = 1; i < allRows.length; i++) {
+          const cols = allRows[i];
           if (cols.every(c => !c.trim())) continue;
           const catLabel = cols[headers.indexOf("カテゴリ")] || "";
           const cat = categories.find(c => c.label === catLabel);
@@ -185,16 +196,18 @@ async function importCSV(file, categories, extraFields) {
 // ---- CSV Export ----
 function exportCSV(companies, categories, extraFields) {
   const getCat = id => categories.find(c => c.id === id) || { label: id||"未設定" };
+  // 改行をスペースに置換して安全にする
+  const safe = v => String(v||"").replace(/\r?\n/g, " ").replace(/\r/g, " ");
   const fixedHeaders = ["企業名","カテゴリ","体験内容","日時","集合場所","持ち物・服装","保護者の見学","駐車場","注意事項"];
   const headers = [...fixedHeaders, ...extraFields.map(f => f.label)];
   const rows = companies.map(c => [
-    c.name||"", getCat(c.categoryId).label, c.description||"",
-    (c.dates||[]).join(" / "), c.meetingPlace||"", c.items||"",
-    c.parentVisit||"", c.parking||"", c.notes||"",
-    ...extraFields.map(f => (c.extra||{})[f.id]||""),
+    safe(c.name), getCat(c.categoryId).label, safe(c.description),
+    safe((c.dates||[]).join(" / ")), safe(c.meetingPlace), safe(c.items),
+    safe(c.parentVisit), safe(c.parking), safe(c.notes),
+    ...extraFields.map(f => safe((c.extra||{})[f.id])),
   ]);
   const escape = v => `"${String(v).replace(/"/g,'""')}"`;
-  const csv = [headers,...rows].map(r=>r.map(escape).join(",")).join("\n");
+  const csv = [headers,...rows].map(r=>r.map(escape).join(",")).join("\r\n");
   const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
