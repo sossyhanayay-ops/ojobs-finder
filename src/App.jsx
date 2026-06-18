@@ -249,7 +249,7 @@ export default function App() {
   const [fieldEditTarget, setFieldEditTarget] = useState(undefined);
   const [fieldForm, setFieldForm] = useState({});
   const [fieldDeleteConfirm, setFieldDeleteConfirm] = useState(null);
-  const [importing, setImporting] = useState(false);
+  const [adminSearch, setAdminSearch] = useState("");
   const [importPreview, setImportPreview] = useState(null); // プレビューデータ
   const [importMode, setImportMode] = useState("add"); // add | replace
 
@@ -454,7 +454,11 @@ export default function App() {
       {/* ===== 企業タブ ===== */}
       {adminTab==="companies" && (
         <div>
-          <div style={{display:"flex",justifyContent:"flex-end",marginBottom:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,gap:10,flexWrap:"wrap"}}>
+            <div style={{...S.searchBox,flex:1,maxWidth:300,padding:"8px 12px"}}>
+              <SearchIcon/>
+              <input style={S.searchInput} placeholder="企業名で検索..." value={adminSearch} onChange={e=>setAdminSearch(e.target.value)}/>
+            </div>
             <button style={S.addBtn} onClick={()=>startEdit(null)}><PlusIcon/> 企業を追加</button>
           </div>
           {editTarget!==undefined && (
@@ -505,7 +509,7 @@ export default function App() {
             </div>
           )}
           <div style={S.adminList}>
-            {companies.map(c=>{
+            {companies.filter(c=>!adminSearch||c.name.includes(adminSearch)).map(c=>{
               const cat=getCat(c.categoryId);
               return (
                 <div key={c.id} style={S.adminRow}>
@@ -644,7 +648,7 @@ export default function App() {
           {allFields.map(({label,val})=>(
             <div key={label} style={S.detailCard}>
               <p style={{...S.detailCardLabel,color:cat.color}}>{label}</p>
-              <p style={S.detailCardVal}>{val}</p>
+              <p style={S.detailCardVal}><LinkText text={val}/></p>
             </div>
           ))}
         </div>
@@ -702,6 +706,23 @@ export default function App() {
 
 function FR({label,children}){return <div style={{display:"flex",flexDirection:"column",gap:4}}><label style={{fontSize:12,fontWeight:600,color:"#666"}}>{label}</label>{children}</div>;}
 function Overlay({children}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}><div style={{background:"#fff",borderRadius:16,padding:32,textAlign:"center",maxWidth:320,width:"90%"}}>{children}</div></div>;}
+
+// URLを自動リンク化
+function LinkText({ text }) {
+  if (!text) return null;
+  const urlRegex = /(https?:\/\/[^\s　]+)/g;
+  const parts = text.split(urlRegex);
+  return (
+    <span>
+      {parts.map((part, i) =>
+        urlRegex.test(part)
+          ? <a key={i} href={part} target="_blank" rel="noopener noreferrer"
+              style={{color:"#3b7bbf",wordBreak:"break-all"}}>{part}</a>
+          : <span key={i}>{part}</span>
+      )}
+    </span>
+  );
+}
 
 const S = {
   center:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",gap:16},
